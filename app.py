@@ -23,7 +23,10 @@ APP_BASE_URL = os.getenv("APP_BASE_URL", "https://salary-linebot-opnl.onrender.c
 LINE_WEBHOOK_URL = os.getenv("LINE_WEBHOOK_URL", f"{APP_BASE_URL.rstrip('/')}/webhook")
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
-COMMAND_SETUP = "工作資訊"
+COMMAND_SETUP_MENU = "設定"
+COMMAND_SETUP_INFO = "工作資訊"
+COMMAND_SETUP = "設定工作"
+COMMAND_PAY_MENU = "記薪"
 COMMAND_CLOCK_IN = "社畜人來打卡啦！"
 COMMAND_SALARY = "偷偷給我看一下薪水吧......"
 
@@ -150,11 +153,28 @@ def parse_positive_decimal(text, field_name):
     return decimal_text(value)
 
 
+def parse_day_of_month(text, field_name):
+    try:
+        value = int(text.strip())
+    except (ValueError, AttributeError):
+        raise ValueError(f"{field_name}請輸入 1 到 31 的日期，例如：5")
+    if value < 1 or value > 31:
+        raise ValueError(f"{field_name}請輸入 1 到 31 的日期")
+    return str(value)
+
+
 def parse_date(text, field_name="日期"):
     try:
         return datetime.strptime(text.strip(), "%Y-%m-%d").date()
     except (ValueError, AttributeError):
         raise ValueError(f"{field_name}請用 YYYY-MM-DD，例如：2026-07-05")
+
+
+def parse_compact_date(text, field_name="日期"):
+    try:
+        return datetime.strptime(text.strip(), "%Y%m%d").date()
+    except (ValueError, AttributeError):
+        raise ValueError(f"{field_name}請用 YYYYMMDD，例如：20260705")
 
 
 def parse_time(text, field_name="時間"):
@@ -205,6 +225,16 @@ def calculate_work(work_date, start_time, end_time, break_minutes, break_paid, h
     return decimal_text(work_hours), decimal_text(daily_salary)
 
 
+def current_month_range():
+    today = datetime.now(TAIPEI_TZ).date()
+    month_start = today.replace(day=1)
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+    return month_start.isoformat(), next_month.isoformat()
+
+
 def save_time_entry(line_user_id, data, work_hours, daily_salary):
     with get_connection() as conn:
         conn.execute(
@@ -235,58 +265,53 @@ def ensure_profile(user):
 
 
 def start_setup(line_user_id):
-    set_state(line_user_id, "setup_hourly_wage")
-    return "請輸入你的時薪，例如：190"
+    set_state(line_user_id, "setup_period_start")
+    return "請輸入每月薪資起始日，只需要日期，例如：1"
 
 
 def start_clock_in(line_user_id, user):
     if not ensure_profile(user):
         return f"還沒有工作資訊喔，請先輸入「{COMMAND_SETUP}」建立時薪與結算資料。"
     set_state(line_user_id, "entry_work_date")
-    return "請輸入上班日期，格式：YYYY-MM-DD"
+    return "請輸入上班日期，格式：YYYYMMDD，例如：20260705"
 
 
 def handle_setup_flow(line_user_id, state, text):
     user = get_or_create_user(line_user_id)
     data = parse_state_data(user)
 
-    if state == "setup_hourly_wage":
-        hourly_wage = parse_positive_decimal(text, "時薪")
-        data["hourly_wage"] = hourly_wage
-        set_state(line_user_id, "setup_period_start", data)
-        return "請輸入薪資起始日，格式：YYYY-MM-DD"
-
     if state == "setup_period_start":
-        period_start = parse_date(text, "起始日")
-        data["period_start"] = period_start.isoformat()
+        data["period_start"] = parse_day_of_month(text, "起始日")
         set_state(line_user_id, "setup_period_end", data)
-        return "請輸入薪資結算日，格式：YYYY-MM-DD"
+        return "請輸入每月薪資結算日，只需要日期，例如：31"
 
     if state == "setup_period_end":
-        period_end = parse_date(text, "結算日")
-        period_start = date.fromisoformat(data["period_start"])
-        if period_end < period_start:
-            raise ValueError("結算日不能早於起始日，請重新輸入結算日。")
-        data["period_end"] = period_end.isoformat()
+        data["period_end"] = parse_day_of_month(text, "結算日")
         set_state(line_user_id, "setup_payday", data)
-        return "請輸入發薪日，格式：YYYY-MM-DD"
+        return "請輸入每月發薪日，只需要日期，例如：10"
 
     if state == "setup_payday":
-        payday = parse_date(text, "發薪日")
+        data["payday"] = parse_day_of_month(text, "發薪日")
+        set_state(line_user_id, "setup_hourly_wage", data)
+        return "請輸入你的時薪，例如：190"
+
+    if state == "setup_hourly_wage":
+        data["hourly_wage"] = parse_positive_decimal(text, "時薪")
         update_user(
             line_user_id,
             hourly_wage=data["hourly_wage"],
             period_start=data["period_start"],
             period_end=data["period_end"],
-            payday=payday.isoformat(),
+            payday=data["payday"],
             state=None,
             state_data="{}",
         )
         return (
-            "工作資訊已保存！\n"
+            "設定成功\n"
             f"時薪：{money(data['hourly_wage'])} 元\n"
-            f"結算區間：{data['period_start']} 到 {data['period_end']}\n"
-            f"發薪日：{payday.isoformat()}"
+            f"薪資起始日：每月 {data['period_start']} 日\n"
+            f"薪資結算日：每月 {data['period_end']} 日\n"
+            f"發薪日：每月 {data['payday']} 日"
         )
 
     return None
@@ -297,7 +322,7 @@ def handle_entry_flow(line_user_id, state, text):
     data = parse_state_data(user)
 
     if state == "entry_work_date":
-        work_date = parse_date(text, "上班日期")
+        work_date = parse_compact_date(text, "上班日期")
         data["work_date"] = work_date.isoformat()
         set_state(line_user_id, "entry_start_time", data)
         return "請輸入上班時間，24 小時制 HH:MM，例如：09:00"
@@ -352,56 +377,89 @@ def salary_summary(line_user_id, user):
     if not ensure_profile(user):
         return f"還沒有工作資訊喔，請先輸入「{COMMAND_SETUP}」建立時薪與結算資料。"
 
-    period_start = user["period_start"]
-    period_end = user["period_end"]
+    month_start, next_month = current_month_range()
     with get_connection() as conn:
-        period_rows = conn.execute(
+        row = conn.execute(
             """
             SELECT COUNT(*) AS count, COALESCE(SUM(work_hours), 0) AS hours,
                    COALESCE(SUM(daily_salary), 0) AS salary
             FROM time_entries
-            WHERE line_user_id = ? AND work_date BETWEEN ? AND ?
+            WHERE line_user_id = ? AND work_date >= ? AND work_date < ?
             """,
-            (line_user_id, period_start, period_end),
+            (line_user_id, month_start, next_month),
         ).fetchone()
-        month_rows = conn.execute(
-            """
-            SELECT substr(work_date, 1, 7) AS month,
-                   COUNT(*) AS count,
-                   SUM(work_hours) AS hours,
-                   SUM(daily_salary) AS salary
-            FROM time_entries
-            WHERE line_user_id = ?
-            GROUP BY substr(work_date, 1, 7)
-            ORDER BY month DESC
-            LIMIT 6
-            """,
-            (line_user_id,),
-        ).fetchall()
 
-    if period_rows["count"] == 0:
+    month_label = month_start[:7]
+    if row["count"] == 0:
         return (
-            f"目前 {period_start} 到 {period_end} 還沒有打卡紀錄。\n"
+            f"{month_label} 目前還沒有打卡紀錄。\n"
             f"輸入「{COMMAND_CLOCK_IN}」開始記錄吧。"
         )
 
     lines = [
-        "目前薪水統計：",
-        f"結算區間：{period_start} 到 {period_end}",
-        f"發薪日：{user['payday']}",
-        f"已記錄：{period_rows['count']} 天",
-        f"總工時：{format_hours(period_rows['hours'])} 小時",
-        f"目前累計薪水：{money(period_rows['salary'])} 元",
+        f"{month_label} 目前薪水統計：",
+        f"已記錄：{row['count']} 天",
+        f"總工時：{format_hours(row['hours'])} 小時",
+        f"目前累計薪水：{money(row['salary'])} 元",
     ]
-    if month_rows:
-        lines.append("")
-        lines.append("月份小計：")
-        for row in month_rows:
-            lines.append(
-                f"{row['month']}：{format_hours(row['hours'])} 小時，"
-                f"{money(row['salary'])} 元"
-            )
     return "\n".join(lines)
+
+
+def setup_menu_message():
+    return {
+        "type": "template",
+        "altText": "設定工作",
+        "template": {
+            "type": "carousel",
+            "columns": [
+                {
+                    "title": "設定工作",
+                    "text": "建立每月結算日、發薪日與時薪。",
+                    "actions": [
+                        {
+                            "type": "message",
+                            "label": "設定工作",
+                            "text": COMMAND_SETUP,
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+
+def pay_menu_message():
+    return {
+        "type": "template",
+        "altText": "記薪",
+        "template": {
+            "type": "carousel",
+            "columns": [
+                {
+                    "title": "記錄工時",
+                    "text": "輸入上班日期、上下班時間與休息時間。",
+                    "actions": [
+                        {
+                            "type": "message",
+                            "label": "開始記薪",
+                            "text": COMMAND_CLOCK_IN,
+                        }
+                    ],
+                },
+                {
+                    "title": "查看薪水",
+                    "text": "查看本月目前累計工時與薪水。",
+                    "actions": [
+                        {
+                            "type": "message",
+                            "label": "查看薪水",
+                            "text": COMMAND_SALARY,
+                        }
+                    ],
+                },
+            ],
+        },
+    }
 
 
 def handle_text_message(line_user_id, text):
@@ -410,6 +468,10 @@ def handle_text_message(line_user_id, text):
 
     if text == COMMAND_SETUP:
         return start_setup(line_user_id)
+    if text in {COMMAND_SETUP_MENU, COMMAND_SETUP_INFO}:
+        return setup_menu_message()
+    if text == COMMAND_PAY_MENU:
+        return pay_menu_message()
     if text == COMMAND_CLOCK_IN:
         return start_clock_in(line_user_id, user)
     if text == COMMAND_SALARY:
@@ -444,14 +506,22 @@ def verify_line_signature(body, signature):
     return hmac.compare_digest(expected, signature or "")
 
 
-def reply_message(reply_token, text):
+def normalize_reply_messages(reply):
+    if isinstance(reply, list):
+        return reply
+    if isinstance(reply, dict):
+        return [reply]
+    return [{"type": "text", "text": str(reply)[:5000]}]
+
+
+def reply_message(reply_token, reply):
     if not LINE_CHANNEL_ACCESS_TOKEN:
         app.logger.warning("LINE_CHANNEL_ACCESS_TOKEN is not set; skipped reply.")
         return
     payload = json.dumps(
         {
             "replyToken": reply_token,
-            "messages": [{"type": "text", "text": text[:5000]}],
+            "messages": normalize_reply_messages(reply),
         }
     ).encode("utf-8")
     line_request = urllib.request.Request(
