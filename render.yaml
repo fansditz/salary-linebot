@@ -12,6 +12,10 @@ services:
         sync: false
       - key: DATABASE_PATH
         value: /var/data/salary_linebot.db
+      - key: APP_BASE_URL
+        value: https://salary-linebot-opnl.onrender.com
+      - key: LINE_WEBHOOK_URL
+        value: https://salary-linebot-opnl.onrender.com/webhook
     disk:
       name: salary-linebot-data
       mountPath: /var/data

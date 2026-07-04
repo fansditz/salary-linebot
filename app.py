@@ -19,6 +19,8 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_PATH", "salary_linebot.db")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
+APP_BASE_URL = os.getenv("APP_BASE_URL", "https://salary-linebot-opnl.onrender.com")
+LINE_WEBHOOK_URL = os.getenv("LINE_WEBHOOK_URL", f"{APP_BASE_URL.rstrip('/')}/webhook")
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
 COMMAND_SETUP = "工作資訊"
@@ -470,7 +472,11 @@ def reply_message(reply_token, text):
 
 @app.get("/")
 def health_check():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "app_base_url": APP_BASE_URL,
+        "webhook_url": LINE_WEBHOOK_URL,
+    }
 
 
 @app.post("/webhook")

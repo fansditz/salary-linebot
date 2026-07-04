@@ -62,6 +62,8 @@ gunicorn app:app
 - `LINE_CHANNEL_ACCESS_TOKEN`
 - `LINE_CHANNEL_SECRET`
 - `DATABASE_PATH=/var/data/salary_linebot.db`
+- `APP_BASE_URL=https://salary-linebot-opnl.onrender.com`
+- `LINE_WEBHOOK_URL=https://salary-linebot-opnl.onrender.com/webhook`
 
 6. 如果要讓 SQLite 資料在重新部署後保留，Render 需要掛 persistent disk：
 
@@ -71,7 +73,7 @@ gunicorn app:app
 7. 部署完成後，到 LINE Developers 後台把 Webhook URL 設成：
 
 ```text
-https://你的-render網域/webhook
+https://salary-linebot-opnl.onrender.com/webhook
 ```
 
 ## 輸入格式
