@@ -28,6 +28,7 @@ COMMAND_SETUP = "設定工作"
 COMMAND_PAY_MENU = "記薪"
 COMMAND_CLOCK_IN = "社畜人來打卡啦！"
 COMMAND_SALARY = "偷偷給我看一下薪水吧......"
+COMMAND_RESET = "重置"
 
 
 app = Flask(__name__)
@@ -144,6 +145,27 @@ def set_state(line_user_id, state, data=None):
 
 def clear_state(line_user_id):
     set_state(line_user_id, None, {})
+
+
+def reset_user_data(line_user_id):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM time_entries WHERE line_user_id = ?", (line_user_id,))
+        conn.execute(
+            """
+            UPDATE users
+            SET work_name = NULL,
+                hourly_wage = NULL,
+                period_start = NULL,
+                period_end = NULL,
+                payday = NULL,
+                state = NULL,
+                state_data = '{}',
+                updated_at = ?
+            WHERE line_user_id = ?
+            """,
+            (now_iso(), line_user_id),
+        )
+    return "已重置完成，先前輸入的設定與打卡資料都已清除。"
 
 
 def parse_state_data(user):
@@ -490,15 +512,8 @@ def handle_text_message(line_user_id, text):
     user = get_or_create_user(line_user_id)
     text = text.strip()
 
-    state = user.get("state")
-    try:
-        if state and state.startswith("setup_"):
-            return handle_setup_flow(line_user_id, state, text)
-        if state and state.startswith("entry_"):
-            return handle_entry_flow(line_user_id, state, text)
-    except ValueError as exc:
-        return str(exc)
-
+    if text == COMMAND_RESET:
+        return reset_user_data(line_user_id)
     if text == COMMAND_SETUP_MENU:
         return setup_menu_message()
     if text == COMMAND_SETUP:
@@ -509,6 +524,15 @@ def handle_text_message(line_user_id, text):
         return start_clock_in(line_user_id, user)
     if text == COMMAND_SALARY:
         return salary_summary(line_user_id, user)
+
+    state = user.get("state")
+    try:
+        if state and state.startswith("setup_"):
+            return handle_setup_flow(line_user_id, state, text)
+        if state and state.startswith("entry_"):
+            return handle_entry_flow(line_user_id, state, text)
+    except ValueError as exc:
+        return str(exc)
 
     return "請使用選單功能。"
 
