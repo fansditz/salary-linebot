@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.env
+salary_linebot.db
+.venv/
+venv/
